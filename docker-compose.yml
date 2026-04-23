@@ -1,0 +1,37 @@
+# EU4 web map — dev compose.
+# Only the `dev` service exists in step 1. Subsequent services
+# (etl / backend / frontend) will be added as the plan progresses.
+#
+# The `dev` service pulls from image eu4dev:latest so that `docker commit`
+# snapshots (eu4dev:base -> eu4dev:py-deps -> ...) survive `down/up`.
+# On first `up` there is no such image yet, so compose will build it from
+# Dockerfile.dev and tag it eu4dev:latest via the `image:` key.
+
+services:
+  dev:
+    image: eu4dev:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        UID: "${UID:-1000}"
+        GID: "${GID:-1000}"
+    container_name: eu4map_project-dev-1
+    hostname: eu4dev
+    user: "${UID:-1000}:${GID:-1000}"
+    working_dir: /workspace
+    ports:
+      - "5173:5173"
+      - "8000:8000"
+    volumes:
+      - ./:/workspace
+      # Raw game files are vendored into ./raw/ and mounted read-only at
+      # /eu4_raw/ for compatibility with the existing ETL paths.
+      - ./raw:/eu4_raw:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PIP_DISABLE_PIP_VERSION_CHECK=1
+    command: ["tail", "-f", "/dev/null"]
+    tty: true
+    stdin_open: true
+    restart: unless-stopped

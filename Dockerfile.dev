@@ -1,0 +1,65 @@
+# Dev container for EU4 web map project.
+# Base: Python 3.12 (Debian bookworm) + Node 20 + build tools + sqlite3.
+# All project development (pip install, npm install, ETL, backend, frontend dev server)
+# happens inside this container via `docker compose exec dev ...`.
+
+FROM python:3.12-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+# System packages + Node 20 from NodeSource
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        curl ca-certificates gnupg git \
+        build-essential pkg-config \
+        sqlite3 libsqlite3-dev \
+        vim less procps \
+        bash-completion; \
+    install -d -m 0755 /etc/apt/keyrings; \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+        | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg; \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+        > /etc/apt/sources.list.d/nodesource.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends nodejs; \
+    rm -rf /var/lib/apt/lists/*; \
+    node --version; npm --version; python --version
+
+# Create a dev user matching host UID/GID so bind-mounted files get correct ownership.
+ARG UID=1000
+ARG GID=1000
+RUN set -eux; \
+    if getent group ${GID} >/dev/null; then \
+        groupmod -n dev "$(getent group ${GID} | cut -d: -f1)"; \
+    else \
+        groupadd -g ${GID} dev; \
+    fi; \
+    if getent passwd ${UID} >/dev/null; then \
+        usermod -l dev -d /home/dev -m "$(getent passwd ${UID} | cut -d: -f1)"; \
+    else \
+        useradd -m -u ${UID} -g ${GID} -s /bin/bash dev; \
+    fi; \
+    mkdir -p /home/dev/.npm-global /home/dev/.cache; \
+    chown -R ${UID}:${GID} /home/dev; \
+    chmod -R u+rwX /home/dev
+
+# Writable locations for Python site-packages and npm globals so snapshots keep them.
+RUN set -eux; \
+    PY_SITE="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"; \
+    mkdir -p "$PY_SITE"; \
+    chown -R ${UID}:${GID} "$PY_SITE" /usr/local/bin /usr/local/lib
+
+USER dev
+WORKDIR /workspace
+
+ENV HOME=/home/dev \
+    NPM_CONFIG_PREFIX=/home/dev/.npm-global \
+    PATH=/home/dev/.npm-global/bin:/home/dev/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+# Container keeps running idle; all real work is `docker compose exec dev ...`.
+CMD ["tail", "-f", "/dev/null"]

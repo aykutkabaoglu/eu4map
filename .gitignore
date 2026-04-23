@@ -1,0 +1,31 @@
+# ETL outputs — committed so a fresh clone can run without re-running ETL
+# data/
+custom_db/
+
+# Vendored game files — copyrighted Steam content, not committed
+raw/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+build/
+.vite/
+*.log
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Local env overrides
+.env.local

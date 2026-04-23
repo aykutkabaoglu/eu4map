@@ -1,15 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
 interface Note { id: number; country_tag: string; text: string; created_at: string }
-interface Commander {
-  id: number; country_tag: string; name: string;
-  fire: number | null; shock: number | null; maneuver: number | null; siege: number | null;
-  start_date: string | null; death_date: string | null; description: string | null;
-}
-interface EventItem {
-  id: number; date: string; country_tag: string | null; province_id: number | null;
-  title: string; description: string | null;
-}
 interface HistoricalEvent { date: string; kind: string; title: string; province_id?: number }
 interface GameEvent {
   id: string; scope: string; title: string | null; desc: string | null;
@@ -19,7 +10,7 @@ interface GameEvent {
 
 export function CustomData(props: { tag: string; provinceId?: number | null }) {
   const { tag, provinceId } = props;
-  const [tab, setTab] = useState<"history" | "game" | "notes" | "commanders" | "events">("history");
+  const [tab, setTab] = useState<"history" | "game" | "notes">("history");
 
   return (
     <div>
@@ -27,14 +18,10 @@ export function CustomData(props: { tag: string; provinceId?: number | null }) {
         <TabButton active={tab === "history"} onClick={() => setTab("history")}>Historical</TabButton>
         <TabButton active={tab === "game"} onClick={() => setTab("game")}>Game Events</TabButton>
         <TabButton active={tab === "notes"} onClick={() => setTab("notes")}>Notes</TabButton>
-        <TabButton active={tab === "commanders"} onClick={() => setTab("commanders")}>Commanders</TabButton>
-        <TabButton active={tab === "events"} onClick={() => setTab("events")}>Custom Events</TabButton>
       </div>
       {tab === "history" && <HistoryTab tag={tag} provinceId={provinceId ?? null} />}
       {tab === "game" && <GameEventsTab tag={tag} />}
       {tab === "notes" && <NotesTab tag={tag} />}
-      {tab === "commanders" && <CommandersTab tag={tag} />}
-      {tab === "events" && <EventsTab tag={tag} provinceId={provinceId ?? null} />}
     </div>
   );
 }
@@ -399,192 +386,6 @@ function NotesTab({ tag }: { tag: string }) {
           <div style={{ fontSize: 10, color: "var(--ink-soft)" }}>{n.created_at}</div>
           <div style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>{n.text}</div>
           <button style={miniBtnStyle} onClick={() => remove(n.id)}>Delete</button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ---------- Commanders ----------
-
-function CommandersTab({ tag }: { tag: string }) {
-  const [items, setItems] = useState<Commander[]>([]);
-  const [form, setForm] = useState({
-    name: "", fire: "", shock: "", maneuver: "", siege: "",
-    start_date: "", description: "",
-  });
-
-  const refresh = useCallback(async () => {
-    const r = await fetch(`/api/custom/countries/${tag}/commanders`);
-    if (r.ok) setItems(await r.json());
-  }, [tag]);
-  useEffect(() => { refresh(); }, [refresh]);
-
-  async function add() {
-    if (!form.name.trim()) return;
-    const body = {
-      name: form.name,
-      fire: form.fire ? +form.fire : null,
-      shock: form.shock ? +form.shock : null,
-      maneuver: form.maneuver ? +form.maneuver : null,
-      siege: form.siege ? +form.siege : null,
-      start_date: form.start_date || null,
-      description: form.description || null,
-    };
-    await fetch(`/api/custom/countries/${tag}/commanders`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    setForm({ name: "", fire: "", shock: "", maneuver: "", siege: "", start_date: "", description: "" });
-    await refresh();
-  }
-  async function remove(id: number) {
-    await fetch(`/api/custom/countries/${tag}/commanders/${id}`, { method: "DELETE" });
-    await refresh();
-  }
-
-  return (
-    <div>
-      <input
-        placeholder="Name"
-        value={form.name}
-        onChange={(e) => setForm({ ...form, name: e.target.value })}
-        style={inputStyle}
-      />
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 4, marginBottom: 4 }}>
-        <StatInput label="Fire" value={form.fire} onChange={(v) => setForm({ ...form, fire: v })} />
-        <StatInput label="Shock" value={form.shock} onChange={(v) => setForm({ ...form, shock: v })} />
-        <StatInput label="Manv." value={form.maneuver} onChange={(v) => setForm({ ...form, maneuver: v })} />
-        <StatInput label="Siege" value={form.siege} onChange={(v) => setForm({ ...form, siege: v })} />
-      </div>
-      <input
-        type="date"
-        value={form.start_date}
-        onChange={(e) => setForm({ ...form, start_date: e.target.value })}
-        style={inputStyle}
-      />
-      <textarea
-        placeholder="Description (optional)"
-        value={form.description}
-        onChange={(e) => setForm({ ...form, description: e.target.value })}
-        rows={2}
-        style={textareaStyle}
-      />
-      <div style={{ textAlign: "right", marginBottom: 6 }}>
-        <button disabled={!form.name.trim()} onClick={add}>Add</button>
-      </div>
-      {items.length === 0 && <Empty text="No commanders." />}
-      {items.map((c) => (
-        <div key={c.id} style={itemStyle}>
-          <div style={{ fontFamily: "var(--font-display)" }}>{c.name}</div>
-          <div style={{ fontSize: 11, color: "var(--ink-soft)" }}>
-            {c.start_date ?? "?"}  ·  F{c.fire ?? "-"} S{c.shock ?? "-"} M{c.maneuver ?? "-"} Sg{c.siege ?? "-"}
-          </div>
-          {c.description && (
-            <div style={{ fontSize: 12, fontStyle: "italic" }}>{c.description}</div>
-          )}
-          <button style={miniBtnStyle} onClick={() => remove(c.id)}>Delete</button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function StatInput(p: { label: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <label style={{ display: "flex", flexDirection: "column", fontSize: 10 }}>
-      <span style={{ color: "var(--ink-soft)" }}>{p.label}</span>
-      <input
-        type="number" min={0} max={6}
-        value={p.value}
-        onChange={(e) => p.onChange(e.target.value)}
-        style={inputStyle}
-      />
-    </label>
-  );
-}
-
-// ---------- Events ----------
-
-function EventsTab({ tag, provinceId }: { tag: string; provinceId: number | null }) {
-  const [items, setItems] = useState<EventItem[]>([]);
-  const [form, setForm] = useState({ date: "", title: "", description: "" });
-  const [scope, setScope] = useState<"country" | "province">("country");
-
-  const refresh = useCallback(async () => {
-    const qs = scope === "province" && provinceId != null
-      ? `province_id=${provinceId}`
-      : `tag=${tag}`;
-    const r = await fetch(`/api/custom/events?${qs}`);
-    if (r.ok) setItems(await r.json());
-  }, [tag, provinceId, scope]);
-  useEffect(() => { refresh(); }, [refresh]);
-
-  async function add() {
-    if (!form.date || !form.title.trim()) return;
-    const body: Record<string, unknown> = {
-      date: form.date,
-      title: form.title,
-      description: form.description || null,
-    };
-    if (scope === "province" && provinceId != null) body.province_id = provinceId;
-    else body.country_tag = tag;
-    await fetch(`/api/custom/events`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    setForm({ date: "", title: "", description: "" });
-    await refresh();
-  }
-  async function remove(id: number) {
-    await fetch(`/api/custom/events/${id}`, { method: "DELETE" });
-    await refresh();
-  }
-
-  return (
-    <div>
-      <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
-        <TabButton active={scope === "country"} onClick={() => setScope("country")}>Country</TabButton>
-        <TabButton
-          active={scope === "province"}
-          onClick={() => provinceId != null && setScope("province")}
-        >
-          Province{provinceId != null ? ` #${provinceId}` : ""}
-        </TabButton>
-      </div>
-      <input
-        type="date"
-        value={form.date}
-        onChange={(e) => setForm({ ...form, date: e.target.value })}
-        style={inputStyle}
-      />
-      <input
-        placeholder="Title"
-        value={form.title}
-        onChange={(e) => setForm({ ...form, title: e.target.value })}
-        style={inputStyle}
-      />
-      <textarea
-        placeholder="Description"
-        value={form.description}
-        onChange={(e) => setForm({ ...form, description: e.target.value })}
-        rows={2}
-        style={textareaStyle}
-      />
-      <div style={{ textAlign: "right", marginBottom: 6 }}>
-        <button disabled={!form.date || !form.title.trim()} onClick={add}>Add</button>
-      </div>
-      {items.length === 0 && <Empty text="No events." />}
-      {items.map((e) => (
-        <div key={e.id} style={itemStyle}>
-          <div style={{ fontSize: 10, color: "var(--ink-soft)" }}>{e.date}</div>
-          <div style={{ fontFamily: "var(--font-display)" }}>{e.title}</div>
-          {e.description && (
-            <div style={{ fontSize: 12, whiteSpace: "pre-wrap" }}>{e.description}</div>
-          )}
-          <button style={miniBtnStyle} onClick={() => remove(e.id)}>Delete</button>
         </div>
       ))}
     </div>

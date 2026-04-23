@@ -62,8 +62,8 @@ function HistoryTab({ tag, provinceId }: { tag: string; provinceId: number | nul
       <div style={{ maxHeight: 360, overflowY: "auto" }}>
         {items.map((e, i) => (
           <div key={i} style={itemStyle}>
-            <div style={{ fontSize: 10, color: "var(--ink-soft)" }}>{e.date} · {e.kind}</div>
-            <div style={{ fontSize: 12 }}>{e.title}</div>
+            <div style={{ fontSize: 14, color: "var(--ink-soft)" }}>{e.date} · {e.kind}</div>
+            <div style={{ fontSize: 17 }}>{e.title}</div>
           </div>
         ))}
       </div>
@@ -77,6 +77,7 @@ function GameEventsTab({ tag }: { tag: string }) {
   const [q, setQ] = useState(tag.toLowerCase());
   const [scope, setScope] = useState<"" | "country" | "province" | "news">("");
   const [loading, setLoading] = useState(false);
+  const [selected, setSelected] = useState<GameEvent | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -111,14 +112,15 @@ function GameEventsTab({ tag }: { tag: string }) {
         <TabButton active={scope === "province"} onClick={() => setScope("province")}>Province</TabButton>
         <TabButton active={scope === "news"} onClick={() => setScope("news")}>News</TabButton>
       </div>
-      <div style={{ fontSize: 10, color: "var(--ink-soft)", marginBottom: 4 }}>
+      <div style={{ fontSize: 14, color: "var(--ink-soft)", marginBottom: 4 }}>
         {loading ? "loading…" : `${items.length} / ${total} events`}
       </div>
       <div style={{ maxHeight: 340, overflowY: "auto" }}>
         {items.map((e) => (
-          <GameEventItem key={e.id} event={e} />
+          <GameEventItem key={e.id} event={e} onSelect={setSelected} />
         ))}
       </div>
+      {selected && <EventDetailModal event={selected} onClose={() => setSelected(null)} />}
     </div>
   );
 }
@@ -135,107 +137,142 @@ interface EventDetail {
   };
 }
 
-function GameEventItem({ event }: { event: GameEvent }) {
-  const [open, setOpen] = useState(false);
-  const [detail, setDetail] = useState<EventDetail | null>(null);
-  const [showRaw, setShowRaw] = useState(false);
-  const [loading, setLoading] = useState(false);
-
-  async function toggle() {
-    if (open) {
-      setOpen(false);
-      return;
-    }
-    setOpen(true);
-    if (detail !== null) return;
-    setLoading(true);
-    try {
-      const r = await fetch(`/api/eu4/events/${encodeURIComponent(event.id)}`);
-      if (r.ok) setDetail(await r.json());
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const parsed = detail?.parsed;
-  const mtth = parsed?.mean_time_to_happen;
-  const mtthText = formatMtth(mtth);
-
+function GameEventItem({ event, onSelect }: { event: GameEvent; onSelect: (e: GameEvent) => void }) {
   return (
-    <div style={{ ...itemStyle, cursor: "pointer" }} onClick={toggle}>
-      <div style={{ fontSize: 10, color: "var(--ink-soft)" }}>
-        {event.namespace} · {event.scope} {open ? "▾" : "▸"}
+    <div style={{ ...itemStyle, cursor: "pointer" }} onClick={() => onSelect(event)}>
+      <div style={{ fontSize: 14, color: "var(--ink-soft)" }}>
+        {event.namespace} · {event.scope} ▸
       </div>
-      <div style={{ fontFamily: "var(--font-display)", fontSize: 12 }}>
+      <div style={{ fontFamily: "var(--font-display)", fontSize: 17 }}>
         {event.title_text ?? event.id}
       </div>
       {event.title_text && (
-        <div style={{ fontSize: 10, color: "var(--ink-soft)" }}>{event.id}</div>
+        <div style={{ fontSize: 13, color: "var(--ink-soft)" }}>{event.id}</div>
       )}
       {event.desc_text && (
-        <div style={{ fontSize: 11, fontStyle: "italic", marginTop: 2 }}>{event.desc_text}</div>
+        <div style={{ fontSize: 16, fontStyle: "italic", marginTop: 2 }}>{event.desc_text}</div>
       )}
+    </div>
+  );
+}
 
-      {open && (
-        <div onClick={(e) => e.stopPropagation()} style={{ marginTop: 8 }}>
-          {loading && <Empty text="loading…" />}
-          {parsed && (
-            <>
-              {mtthText && (
-                <Section title="Mean Time to Happen">
-                  <span style={{ fontSize: 12 }}>{mtthText}</span>
-                </Section>
-              )}
-              {parsed.trigger != null && (
-                <Section title="Conditions">
-                  <TriggerTree value={parsed.trigger} depth={0} />
-                </Section>
-              )}
-              {parsed.immediate != null && (
-                <Section title="Immediate Effects">
-                  <TriggerTree value={parsed.immediate} depth={0} />
-                </Section>
-              )}
-              {parsed.options && parsed.options.length > 0 && (
-                <Section title="Options">
-                  {parsed.options.map((o, i) => (
-                    <div key={i} style={{
-                      borderLeft: "2px solid var(--gold)",
-                      paddingLeft: 6,
-                      marginBottom: 6,
-                    }}>
-                      <div style={{ fontFamily: "var(--font-display)", fontSize: 12 }}>
-                        {o.name_text ?? o.name_key ?? `Option ${i + 1}`}
-                      </div>
-                      {Object.keys(o.effects).length > 0 && (
-                        <TriggerTree value={o.effects} depth={0} />
-                      )}
-                    </div>
-                  ))}
-                </Section>
-              )}
-              <div style={{ marginTop: 6 }}>
-                <button
-                  style={{ fontSize: 9, padding: "2px 6px" }}
-                  onClick={() => setShowRaw((v) => !v)}
-                >
-                  {showRaw ? "Hide raw data" : "Show raw data"}
-                </button>
-                {showRaw && (
-                  <pre style={{
-                    marginTop: 6, padding: 6, fontSize: 10,
-                    fontFamily: "ui-monospace, Menlo, monospace",
-                    background: "rgba(20,14,6,0.45)", color: "var(--parchment)",
-                    border: "1px solid var(--frame-dark)",
-                    maxHeight: 260, overflow: "auto",
-                    whiteSpace: "pre-wrap", wordBreak: "break-word",
-                  }}>{detail?.body}</pre>
-                )}
-              </div>
-            </>
-          )}
+function EventDetailModal({ event, onClose }: { event: GameEvent; onClose: () => void }) {
+  const [detail, setDetail] = useState<EventDetail | null>(null);
+  const [showRaw, setShowRaw] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setDetail(null);
+    setLoading(true);
+    fetch(`/api/eu4/events/${encodeURIComponent(event.id)}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { setDetail(d); setLoading(false); });
+  }, [event.id]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const parsed = detail?.parsed;
+  const mtthText = formatMtth(parsed?.mean_time_to_happen);
+
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, zIndex: 1000,
+        background: "rgba(20,14,6,0.72)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}
+      onClick={onClose}
+    >
+      <div
+        className="eu4-panel"
+        style={{
+          width: "min(680px, 92vw)",
+          maxHeight: "82vh",
+          overflowY: "auto",
+          padding: "20px 24px",
+          position: "relative",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          style={{ position: "absolute", top: 8, right: 10, fontSize: 14, padding: "3px 10px" }}
+          onClick={onClose}
+        >
+          ✕ Close
+        </button>
+
+        <div style={{ fontSize: 14, color: "var(--ink-soft)", marginBottom: 4 }}>
+          {event.namespace} · {event.scope} · {event.id}
         </div>
-      )}
+        <h2 style={{ marginTop: 0 }}>{event.title_text ?? event.id}</h2>
+        {event.desc_text && (
+          <p style={{ fontStyle: "italic", fontSize: 18, marginTop: 0, marginBottom: 12 }}>
+            {event.desc_text}
+          </p>
+        )}
+
+        {loading && <Empty text="loading…" />}
+
+        {parsed && (
+          <>
+            {mtthText && (
+              <Section title="Mean Time to Happen">
+                <span style={{ fontSize: 18 }}>{mtthText}</span>
+              </Section>
+            )}
+            {parsed.trigger != null && (
+              <Section title="Conditions">
+                <TriggerTree value={parsed.trigger} depth={0} />
+              </Section>
+            )}
+            {parsed.immediate != null && (
+              <Section title="Immediate Effects">
+                <TriggerTree value={parsed.immediate} depth={0} />
+              </Section>
+            )}
+            {parsed.options && parsed.options.length > 0 && (
+              <Section title="Options">
+                {parsed.options.map((o, i) => (
+                  <div key={i} style={{
+                    borderLeft: "2px solid var(--gold)",
+                    paddingLeft: 8,
+                    marginBottom: 8,
+                  }}>
+                    <div style={{ fontFamily: "var(--font-display)", fontSize: 18, marginBottom: 2 }}>
+                      {o.name_text ?? o.name_key ?? `Option ${i + 1}`}
+                    </div>
+                    {Object.keys(o.effects).length > 0 && (
+                      <TriggerTree value={o.effects} depth={0} />
+                    )}
+                  </div>
+                ))}
+              </Section>
+            )}
+            <div style={{ marginTop: 10 }}>
+              <button
+                style={{ fontSize: 14, padding: "3px 8px" }}
+                onClick={() => setShowRaw((v) => !v)}
+              >
+                {showRaw ? "Hide raw data" : "Show raw data"}
+              </button>
+              {showRaw && (
+                <pre style={{
+                  marginTop: 6, padding: 8, fontSize: 14,
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                  background: "rgba(20,14,6,0.45)", color: "var(--parchment)",
+                  border: "1px solid var(--frame-dark)",
+                  maxHeight: 300, overflow: "auto",
+                  whiteSpace: "pre-wrap", wordBreak: "break-word",
+                }}>{detail?.body}</pre>
+              )}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -257,7 +294,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     <div style={{ marginTop: 6 }}>
       <div style={{
         fontFamily: "var(--font-display)",
-        fontSize: 10,
+        fontSize: 14,
         letterSpacing: "0.08em",
         textTransform: "uppercase",
         color: "var(--ink-soft)",
@@ -273,7 +310,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function TriggerTree({ value, depth }: { value: unknown; depth: number }) {
   if (value === null || value === undefined) return null;
   if (typeof value !== "object") {
-    return <span style={{ fontSize: 11 }}>{String(value)}</span>;
+    return <span style={{ fontSize: 16 }}>{String(value)}</span>;
   }
   if (Array.isArray(value)) {
     return (
@@ -290,7 +327,7 @@ function TriggerTree({ value, depth }: { value: unknown; depth: number }) {
       {entries.map(([k, v]) => {
         const isLeaf = v === null || typeof v !== "object";
         return (
-          <div key={k} style={{ fontSize: 11, lineHeight: "1.35em" }}>
+          <div key={k} style={{ fontSize: 16, lineHeight: "1.4em" }}>
             <span style={{
               fontFamily: "var(--font-ui)",
               color: "var(--ink-soft)",
@@ -322,7 +359,7 @@ function TabButton(p: { active: boolean; onClick: () => void; children: React.Re
     <button
       onClick={p.onClick}
       style={{
-        fontSize: 10,
+        fontSize: 13,
         padding: "4px 10px",
         opacity: p.active ? 1 : 0.6,
         boxShadow: p.active
@@ -383,8 +420,8 @@ function NotesTab({ tag }: { tag: string }) {
       {items.length === 0 && <Empty text="No notes." />}
       {items.map((n) => (
         <div key={n.id} style={itemStyle}>
-          <div style={{ fontSize: 10, color: "var(--ink-soft)" }}>{n.created_at}</div>
-          <div style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>{n.text}</div>
+          <div style={{ fontSize: 14, color: "var(--ink-soft)" }}>{n.created_at}</div>
+          <div style={{ whiteSpace: "pre-wrap", fontSize: 17 }}>{n.text}</div>
           <button style={miniBtnStyle} onClick={() => remove(n.id)}>Delete</button>
         </div>
       ))}
@@ -396,7 +433,7 @@ function NotesTab({ tag }: { tag: string }) {
 
 function Empty({ text }: { text: string }) {
   return (
-    <div style={{ fontSize: 12, fontStyle: "italic", color: "var(--ink-soft)", padding: "4px 0" }}>
+    <div style={{ fontSize: 16, fontStyle: "italic", color: "var(--ink-soft)", padding: "4px 0" }}>
       {text}
     </div>
   );
@@ -407,7 +444,7 @@ const inputStyle: React.CSSProperties = {
   padding: "4px 6px",
   marginBottom: 4,
   fontFamily: "var(--font-ui)",
-  fontSize: 12,
+  fontSize: 16,
   background: "var(--parchment-dark)",
   border: "1px solid var(--frame-dark)",
   color: "var(--ink)",
@@ -424,6 +461,6 @@ const miniBtnStyle: React.CSSProperties = {
   position: "absolute",
   top: 2,
   right: 2,
-  padding: "1px 6px",
-  fontSize: 10,
+  padding: "2px 7px",
+  fontSize: 13,
 };

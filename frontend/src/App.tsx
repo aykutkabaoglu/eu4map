@@ -101,7 +101,7 @@ export default function App() {
         <MapCanvas />
       </div>
 
-      <div style={{ gridColumn: "2", gridRow: "2", position: "relative" }}>
+      <div style={{ gridColumn: "2", gridRow: "2", position: "relative", minHeight: 0, overflow: "hidden" }}>
         <div
           onMouseDown={() => {
             draggingRef.current = true;

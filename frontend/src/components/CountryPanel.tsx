@@ -70,33 +70,21 @@ export function CountryPanel() {
         )}
         {ownerName ?? "Unclaimed"}
       </h1>
-      {loading && <div style={{ fontSize: 12, fontStyle: "italic" }}>yükleniyor…</div>}
-
-      <h2 style={{ marginTop: 14 }}>Province</h2>
-      <dl className="kv">
-        <dt>ID</dt><dd>{selected.id}</dd>
-        <dt>Name</dt><dd>{province?.name ?? "—"}</dd>
-        <dt>Type</dt><dd>{
-          province?.is_sea ? "sea"
-          : province?.is_lake ? "lake"
-          : province?.is_wasteland ? "wasteland"
-          : "land"
-        }</dd>
-        <dt>Owner</dt><dd>{selected.owner ?? "—"}</dd>
-      </dl>
+      {province?.name && (
+        <div style={{ fontFamily: "var(--font-body)", fontStyle: "italic", fontSize: "calc(11px * var(--panel-scale, 1))", marginBottom: 8, color: "var(--ink-soft)" }}>
+          {province.name}
+        </div>
+      )}
+      {loading && <div style={{ fontSize: 12, fontStyle: "italic" }}>loading…</div>}
 
       {country && (
-        <>
-          <h2 style={{ marginTop: 14 }}>Country</h2>
-          <dl className="kv">
-            <dt>Tag</dt><dd>{country.tag}</dd>
-            <dt>Government</dt><dd>{country.government ?? "—"}</dd>
-            <dt>Religion</dt><dd>{country.religion ?? "—"}</dd>
-            <dt>Culture</dt><dd>{country.primary_culture ?? "—"}</dd>
-            <dt>Tech Group</dt><dd>{country.technology_group ?? "—"}</dd>
-            <dt>Capital</dt><dd>{country.capital_name ? `${country.capital_name} (#${country.capital_id})` : country.capital_id ?? "—"}</dd>
-          </dl>
-        </>
+        <dl className="kv">
+          <dt>Government</dt><dd>{country.government ?? "—"}</dd>
+          <dt>Religion</dt><dd>{country.religion ?? "—"}</dd>
+          <dt>Culture</dt><dd>{country.primary_culture ?? "—"}</dd>
+          <dt>Tech Group</dt><dd>{country.technology_group ?? "—"}</dd>
+          <dt>Capital</dt><dd>{country.capital_name ? `${country.capital_name} (#${country.capital_id})` : country.capital_id ?? "—"}</dd>
+        </dl>
       )}
 
       {monarch && (

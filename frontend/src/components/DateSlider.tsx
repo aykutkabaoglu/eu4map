@@ -67,7 +67,7 @@ export function DateSlider() {
         display: "flex",
         alignItems: "center",
         gap: 16,
-        padding: "8px 18px",
+        padding: "5px 18px",
       }}
     >
       <button onClick={() => setPlaying(!playing)} style={{ minWidth: 72 }}>
@@ -76,10 +76,10 @@ export function DateSlider() {
       <div
         style={{
           fontFamily: "var(--font-display)",
-          fontSize: 16,
+          fontSize: 13,
           letterSpacing: "0.15em",
           color: "var(--ink)",
-          minWidth: 130,
+          minWidth: 110,
           textAlign: "center",
         }}
       >
@@ -97,7 +97,7 @@ export function DateSlider() {
           display: "flex",
           alignItems: "center",
           flex: 1,
-          height: 28,
+          height: 22,
           userSelect: "none",
           touchAction: "none",
         }}
@@ -107,7 +107,7 @@ export function DateSlider() {
             backgroundColor: "var(--frame-dark)",
             position: "relative",
             flexGrow: 1,
-            height: 8,
+            height: 6,
             borderRadius: 4,
             boxShadow: "inset 0 2px 3px rgba(0,0,0,0.6)",
           }}
@@ -126,7 +126,7 @@ export function DateSlider() {
           style={{
             display: "block",
             width: 18,
-            height: 22,
+            height: 18,
             background: "linear-gradient(180deg, var(--gold-light), var(--gold))",
             border: "1px solid var(--frame-dark)",
             borderRadius: 3,
@@ -138,9 +138,9 @@ export function DateSlider() {
       <div
         style={{
           fontFamily: "var(--font-ui)",
-          fontSize: 11,
+          fontSize: 10,
           color: "var(--ink-soft)",
-          minWidth: 150,
+          minWidth: 120,
           textAlign: "right",
         }}
       >

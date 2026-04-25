@@ -31,8 +31,6 @@ export function MapCanvas() {
     createRenderer({
       canvas: canvasRef.current,
       provincesUrl: "/data/provinces_id.png",
-      vectorsUrl: "/data/province_vectors.bin",
-      bordersUrl: "/data/province_borders.png",
       maxProvinces: meta.max_provinces,
     })
       .then((r) => {

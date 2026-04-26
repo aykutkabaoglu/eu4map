@@ -42,12 +42,16 @@ export interface SelectedProvince {
 // id -> [cx, cy, area, bx0, by0, bx1, by1]  (tex coords 0..1, area in px)
 export type Centroids = Record<string, [number, number, number, number, number, number, number]>;
 
+// tag -> [[date, province_id], ...] sorted ascending — only tags that have changes
+export type CapitalTimeline = Record<string, Array<[string, number]>>;
+
 interface AppState {
   // raw data
   meta: Meta | null;
   countries: CountryMap;
   timeline: OwnerTimeline;
   centroids: Centroids;
+  capitalTimeline: CapitalTimeline;
   provinceNames: Record<string, string>;
   loaded: boolean;
   error: string | null;
@@ -77,6 +81,7 @@ export const useApp = create<AppState>((set, get) => ({
   countries: {},
   timeline: {},
   centroids: {},
+  capitalTimeline: {},
   provinceNames: {},
   loaded: false,
   error: null,
@@ -89,11 +94,12 @@ export const useApp = create<AppState>((set, get) => ({
 
   async loadAll() {
     try {
-      const [metaRes, countriesRes, timelineRes, centroidsRes, namesRes] = await Promise.all([
+      const [metaRes, countriesRes, timelineRes, centroidsRes, capitalTimelineRes, namesRes] = await Promise.all([
         fetch("/data/meta.json"),
         fetch("/data/countries.json"),
         fetch("/data/province_owner_timeline.json"),
         fetch("/data/province_centroids.json"),
+        fetch("/data/country_capital_timeline.json"),
         fetch("/data/province_names.json"),
       ]);
       if (!metaRes.ok || !countriesRes.ok || !timelineRes.ok) {
@@ -103,8 +109,9 @@ export const useApp = create<AppState>((set, get) => ({
       const countries: CountryMap = await countriesRes.json();
       const timeline: OwnerTimeline = await timelineRes.json();
       const centroids: Centroids = centroidsRes.ok ? await centroidsRes.json() : {};
+      const capitalTimeline: CapitalTimeline = capitalTimelineRes.ok ? await capitalTimelineRes.json() : {};
       const provinceNames: Record<string, string> = namesRes.ok ? await namesRes.json() : {};
-      set({ meta, countries, timeline, centroids, provinceNames, loaded: true, currentDate: meta.start });
+      set({ meta, countries, timeline, centroids, capitalTimeline, provinceNames, loaded: true, currentDate: meta.start });
     } catch (e) {
       set({ error: (e as Error).message });
     }
@@ -156,55 +163,74 @@ export const useApp = create<AppState>((set, get) => ({
 export interface CountryLabel {
   tag: string;
   name: string;
-  u: number;   // weighted centroid (tex coords)
+  u: number;   // label position: capital province centroid (tex coords)
   v: number;
-  area: number;
-  // Union bounding box in tex coords — used to cap label width/font.
-  bx0: number; by0: number; bx1: number; by1: number;
+  area: number; // total owned province area (texture pixels) — drives font size + visibility
 }
 
-/** Aggregate province centroids into one weighted label per country at the given date. */
-export function computeCountryLabels(state: AppState, date: string): CountryLabel[] {
-  const { meta, countries, timeline, centroids } = state;
+/** Minimal state slice needed by computeCountryLabels — avoids the `as never` hack. */
+export interface LabelState {
+  meta: Meta | null;
+  countries: CountryMap;
+  timeline: OwnerTimeline;
+  centroids: Centroids;
+  capitalTimeline: CapitalTimeline;
+}
+
+/** Return the capital province id active at the given date for the given tag. */
+export function capitalAt(capitalTimeline: CapitalTimeline, countries: CountryMap, tag: string, tKey: number): number | null {
+  const changes = capitalTimeline[tag];
+  if (changes && changes.length > 0) {
+    // Walk forward; take the last entry whose date <= tKey.
+    let result: number | null = null;
+    for (const [iso, capId] of changes) {
+      if (dateKey(iso) <= tKey) result = capId;
+      else break;
+    }
+    if (result !== null) return result;
+  }
+  // Fallback to static capital from countries.json
+  return countries[tag]?.capital ?? null;
+}
+
+/** Build one label per country at the given date, anchored to the current capital province.
+ *  If the capital has been conquered, falls back to the area-weighted centroid of owned provinces. */
+export function computeCountryLabels(state: LabelState, date: string): CountryLabel[] {
+  const { meta, countries, timeline, centroids, capitalTimeline } = state;
   if (!meta) return [];
   const tKey = dateKey(date);
-  interface Agg {
-    sx: number; sy: number; area: number;
-    bx0: number; by0: number; bx1: number; by1: number;
-  }
+
+  interface Agg { sx: number; sy: number; area: number; }
   const agg: Record<string, Agg> = {};
+
   for (const idStr in timeline) {
     const c = centroids[idStr];
     if (!c) continue;
     const owner = binarySearchOwner(timeline[idStr], tKey);
     if (!owner) continue;
-    const [cx, cy, area, bx0, by0, bx1, by1] = c;
-    const a =
-      agg[owner] ??
-      (agg[owner] = {
-        sx: 0, sy: 0, area: 0,
-        bx0: 1, by0: 1, bx1: 0, by1: 0,
-      });
+    const [cx, cy, area] = c;
+    const a = agg[owner] ?? (agg[owner] = { sx: 0, sy: 0, area: 0 });
     a.sx += cx * area;
     a.sy += cy * area;
     a.area += area;
-    if (bx0 < a.bx0) a.bx0 = bx0;
-    if (by0 < a.by0) a.by0 = by0;
-    if (bx1 > a.bx1) a.bx1 = bx1;
-    if (by1 > a.by1) a.by1 = by1;
   }
+
   const out: CountryLabel[] = [];
   for (const tag in agg) {
     const a = agg[tag];
     if (a.area < 200) continue;
-    const country = countries[tag];
+
+    // Prefer the current capital; fall back to owned-province centroid if conquered.
+    const capId = capitalAt(capitalTimeline, countries, tag, tKey);
+    const capOwned = capId != null && binarySearchOwner(timeline[String(capId)] ?? [], tKey) === tag;
+    const cap = capOwned ? centroids[String(capId)] : null;
+
     out.push({
       tag,
-      name: country?.name ?? tag,
-      u: a.sx / a.area,
-      v: a.sy / a.area,
+      name: countries[tag]?.name ?? tag,
+      u: cap ? cap[0] : a.sx / a.area,
+      v: cap ? cap[1] : a.sy / a.area,
       area: a.area,
-      bx0: a.bx0, by0: a.by0, bx1: a.bx1, by1: a.by1,
     });
   }
   out.sort((p, q) => q.area - p.area);

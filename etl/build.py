@@ -469,6 +469,7 @@ def run() -> int:
     leaders_rows: list[dict] = []
 
     print(f"[etl] parsing {len(tags)} country history + common files ...", flush=True)
+    capital_timeline_json: dict[str, list[list]] = {}
     for tag, rel in sorted(tags.items()):
         common_file = RAW / "common" / rel
         color = load_country_color(common_file)
@@ -508,6 +509,27 @@ def run() -> int:
         }
         rulers_rows.extend(extract_rulers(tag, dated))
         leaders_rows.extend(extract_leaders(tag, dated))
+
+        # Collect in-game dated capital changes. The static initial capital in
+        # countries.json already serves as the pre-change fallback, so we only
+        # record explicit dated moves here (no artificial game-start entry).
+        cap_changes: list[list] = []
+        game_start_iso = f"{GAME_START.y:04d}-{GAME_START.m:02d}-{GAME_START.d:02d}"
+        game_end_iso   = f"{GAME_END.y:04d}-{GAME_END.m:02d}-{GAME_END.d:02d}"
+        for date, block in dated:
+            cap = block.get("capital")
+            if cap is None or isinstance(cap, Block):
+                continue
+            try:
+                cid = int(str(cap).strip())
+            except (ValueError, TypeError):
+                continue
+            iso = f"{date.y:04d}-{date.m:02d}-{date.d:02d}"
+            if iso < game_start_iso or iso > game_end_iso:
+                continue
+            cap_changes.append([iso, cid])
+        if cap_changes:
+            capital_timeline_json[tag] = cap_changes
 
     # --- 4. walk provinces
     print(f"[etl] parsing {len(hist_province_files)} province history files ...", flush=True)
@@ -591,6 +613,10 @@ def run() -> int:
     # --- 6. write JSON outputs
     print("[etl] writing JSON outputs ...", flush=True)
     (OUT / "countries.json").write_text(json.dumps(countries_json, ensure_ascii=False), encoding="utf-8")
+    (OUT / "country_capital_timeline.json").write_text(
+        json.dumps(capital_timeline_json, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
     (OUT / "province_owner_timeline.json").write_text(
         json.dumps(timeline_json, ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8",

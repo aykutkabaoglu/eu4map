@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useApp, computeCountryLabels } from "../store";
+import { useApp, computeCountryLabels, type LabelState } from "../store";
 import { createRenderer, type MapRenderer } from "../renderer";
 
 export function MapCanvas() {
@@ -166,6 +166,7 @@ function CountryLabels({ rendererRef }: { rendererRef: React.RefObject<MapRender
   const countries = useApp((s) => s.countries);
   const timeline = useApp((s) => s.timeline);
   const centroids = useApp((s) => s.centroids);
+  const capitalTimeline = useApp((s) => s.capitalTimeline);
   const [version, setVersion] = useState(0);
 
   // Re-render whenever the renderer view changes (pan/zoom).
@@ -179,27 +180,22 @@ function CountryLabels({ rendererRef }: { rendererRef: React.RefObject<MapRender
 
   const labels = useMemo(() => {
     if (!loaded || !meta) return [];
-    return computeCountryLabels(
-      { meta, countries, timeline, centroids } as never,
-      currentDate,
-    );
-  }, [loaded, meta, countries, timeline, centroids, currentDate]);
+    const labelState: LabelState = { meta, countries, timeline, centroids, capitalTimeline };
+    return computeCountryLabels(labelState, currentDate);
+  }, [loaded, meta, countries, timeline, centroids, capitalTimeline, currentDate]);
 
   const visible = useMemo(() => {
     const r = rendererRef.current;
-    if (!r) return [];
+    if (!r) return { items: [], zoom: 1 };
     const zoom = r.getZoom();
     const minArea = 1500 / (zoom * zoom);
-    return labels
+    const items = labels
       .filter((l) => l.area >= minArea)
       .map((l) => {
         const c = r.texToClient(l.u, l.v);
-        const p0 = r.texToClient(l.bx0, l.by0);
-        const p1 = r.texToClient(l.bx1, l.by1);
-        const boxW = Math.max(1, p1.x - p0.x);
-        const boxH = Math.max(1, p1.y - p0.y);
-        return { ...l, x: c.x, y: c.y, boxW, boxH };
+        return { ...l, x: c.x, y: c.y };
       });
+    return { items, zoom };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [labels, version]);
 
@@ -218,12 +214,11 @@ function CountryLabels({ rendererRef }: { rendererRef: React.RefObject<MapRender
         overflow: "hidden",
       }}
     >
-      {visible.map((l) => {
-        const avgGlyph = 0.75; // approximate glyph width for Cinzel caps + letter-spacing
-        const nameLen = Math.max(3, l.name.length);
-        const maxByWidth = (l.boxW * 0.9) / (nameLen * avgGlyph);
-        const maxByHeight = l.boxH * 0.6;
-        const fontSize = Math.min(28, maxByWidth, maxByHeight);
+      {visible.items.map((l) => {
+        const { zoom } = visible;
+        // Font scales with actual owned land area + current zoom, capped at 28px.
+        // sqrt(area) normalises so large countries don't dominate too much.
+        const fontSize = Math.min(28, Math.sqrt(l.area) * zoom * 0.05);
         if (fontSize < 9) return null;
         return (
           <div

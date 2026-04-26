@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useApp } from "../store";
+import { useApp, capitalAt, dateKey } from "../store";
 import type { CountryApi, ProvinceApi, RulerApi } from "../types";
 import { CustomData } from "./CustomData";
 
@@ -7,6 +7,8 @@ export function CountryPanel() {
   const selected = useApp((s) => s.selected);
   const countries = useApp((s) => s.countries);
   const currentDate = useApp((s) => s.currentDate);
+  const capitalTimeline = useApp((s) => s.capitalTimeline);
+  const provinceNames = useApp((s) => s.provinceNames);
 
   const [province, setProvince] = useState<ProvinceApi | null>(null);
   const [country, setCountry] = useState<CountryApi | null>(null);
@@ -83,7 +85,13 @@ export function CountryPanel() {
           <dt>Religion</dt><dd>{country.religion ?? "—"}</dd>
           <dt>Culture</dt><dd>{country.primary_culture ?? "—"}</dd>
           <dt>Tech Group</dt><dd>{country.technology_group ?? "—"}</dd>
-          <dt>Capital</dt><dd>{country.capital_name ? `${country.capital_name} (#${country.capital_id})` : country.capital_id ?? "—"}</dd>
+          <dt>Capital</dt><dd>{(() => {
+            if (!selected.owner) return "—";
+            const capId = capitalAt(capitalTimeline, countries, selected.owner, dateKey(currentDate));
+            if (capId == null) return country.capital_name ?? "—";
+            const name = provinceNames[String(capId)] ?? country.capital_name;
+            return name ? `${name} (#${capId})` : `#${capId}`;
+          })()}</dd>
         </dl>
       )}
 

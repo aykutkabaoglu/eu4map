@@ -168,12 +168,13 @@ export const useApp = create<AppState>((set, get) => ({
 }));
 
 export interface CountryLabel {
+  key: string;     // unique render key: tag + component index
   tag: string;
   name: string;
-  u: number;    // label position in texture coords (main landmass centroid)
+  u: number;       // component centroid in texture coords
   v: number;
-  area: number; // total owned province area (texture pixels) — drives font size + visibility
-  angle: number; // principal axis rotation in radians
+  axisLen: number; // principal axis length normalised by map width (drives font size)
+  angle: number;   // principal axis angle in radians
 }
 
 /** Minimal state slice needed by computeCountryLabels — avoids the `as never` hack. */
@@ -248,9 +249,12 @@ function principalAngle(ids: string[], centroids: Centroids, mapW: number, mapH:
   return 0.5 * Math.atan2(2 * vxy, vxx - vyy);
 }
 
-/** Build one label per country at the given date.
- *  Label is placed on the largest connected landmass containing the capital (or
- *  the largest component if the capital is lost). Rotation follows the principal axis. */
+// Components whose centroids are within this pixel distance are merged into one label.
+const MERGE_DIST_PX = 200;
+
+/** Build labels per country at the given date.
+ *  Connected components closer than MERGE_DIST_PX are merged into a single label;
+ *  distant territories (colonies, far islands) each get their own label. */
 export function computeCountryLabels(state: LabelState, date: string): CountryLabel[] {
   const { meta, countries, timeline, centroids, capitalTimeline, adjacency } = state;
   if (!meta) return [];
@@ -267,63 +271,99 @@ export function computeCountryLabels(state: LabelState, date: string): CountryLa
   }
 
   const out: CountryLabel[] = [];
+
   for (const tag in owned) {
     const provinces = owned[tag];
     const ownedSet = new Set(provinces);
 
-    // Find all connected components.
+    // Find connected components via BFS.
     const visited = new Set<string>();
-    const components: Set<string>[] = [];
+    const rawComps: string[][] = [];
     for (const id of provinces) {
       if (!visited.has(id)) {
         const comp = bfsComponent(id, ownedSet, adjacency);
         comp.forEach((p) => visited.add(p));
-        components.push(comp);
+        rawComps.push([...comp]);
       }
     }
 
-    // Prefer the component containing the current capital; fall back to largest by area.
-    const capId = capitalAt(capitalTimeline, countries, tag, tKey);
-    const capStr = capId != null ? String(capId) : null;
-    const capOwned = capStr != null && ownedSet.has(capStr) &&
-      binarySearchOwner(timeline[capStr] ?? [], tKey) === tag;
+    // Compute area-weighted centroid for each raw component.
+    interface CompInfo { ids: string[]; area: number; cu: number; cv: number; }
+    const compInfos: CompInfo[] = [];
+    for (const ids of rawComps) {
+      let area = 0, su = 0, sv = 0;
+      for (const id of ids) {
+        const c = centroids[id];
+        if (!c) continue;
+        area += c[2]; su += c[0] * c[2]; sv += c[1] * c[2];
+      }
+      if (area < 200) continue;
+      compInfos.push({ ids, area, cu: su / area, cv: sv / area });
+    }
+    // Sort largest first so the main territory becomes the first group.
+    compInfos.sort((a, b) => b.area - a.area);
 
-    let mainComp: Set<string>;
-    if (capOwned && capStr) {
-      mainComp = components.find((c) => c.has(capStr)) ?? components[0];
-    } else {
-      // Largest component by total province area.
-      mainComp = components.reduce((best, c) => {
-        const area = (id: string) => centroids[id]?.[2] ?? 0;
-        const areaOf = (comp: Set<string>) => { let s = 0; comp.forEach((p) => s += area(p)); return s; };
-        return areaOf(c) > areaOf(best) ? c : best;
-      }, components[0]);
+    // Greedy merge: each component joins the nearest existing group within MERGE_DIST_PX.
+    const groups: { ids: string[]; area: number; cu: number; cv: number }[] = [];
+    for (const comp of compInfos) {
+      let merged = false;
+      for (const g of groups) {
+        const dx = (comp.cu - g.cu) * mapW;
+        const dy = (comp.cv - g.cv) * mapH;
+        if (Math.sqrt(dx * dx + dy * dy) < MERGE_DIST_PX) {
+          // Update group centroid (area-weighted) and append provinces.
+          const newArea = g.area + comp.area;
+          g.cu = (g.cu * g.area + comp.cu * comp.area) / newArea;
+          g.cv = (g.cv * g.area + comp.cv * comp.area) / newArea;
+          g.area = newArea;
+          g.ids.push(...comp.ids);
+          merged = true;
+          break;
+        }
+      }
+      if (!merged) {
+        groups.push({ ids: [...comp.ids], area: comp.area, cu: comp.cu, cv: comp.cv });
+      }
     }
 
-    // Area-weighted centroid of the main component.
-    const compIds = [...mainComp];
-    let totalArea = 0, su = 0, sv = 0;
-    for (const id of compIds) {
-      const c = centroids[id];
-      if (!c) continue;
-      totalArea += c[2]; su += c[0] * c[2]; sv += c[1] * c[2];
+    // Emit one label per group.
+    for (let gi = 0; gi < groups.length; gi++) {
+      const g = groups[gi];
+      const angle = principalAngle(g.ids, centroids, mapW, mapH);
+
+      // Axis extent: project province centroids onto the principal axis direction.
+      const cosA = Math.cos(angle), sinA = Math.sin(angle);
+      let minProj = Infinity, maxProj = -Infinity;
+      for (const id of g.ids) {
+        const c = centroids[id];
+        if (!c) continue;
+        const proj = c[0] * mapW * cosA + c[1] * mapH * sinA;
+        if (proj < minProj) minProj = proj;
+        if (proj > maxProj) maxProj = proj;
+      }
+      const axisLen = (maxProj - minProj) / mapW;
+
+      // Recompute centroid over all provinces in the group (merging shifted g.cu/cv).
+      let totalArea = 0, su = 0, sv = 0;
+      for (const id of g.ids) {
+        const c = centroids[id];
+        if (!c) continue;
+        totalArea += c[2]; su += c[0] * c[2]; sv += c[1] * c[2];
+      }
+
+      out.push({
+        key: `${tag}_${gi}`,
+        tag,
+        name: countries[tag]?.name ?? tag,
+        u: su / totalArea,
+        v: sv / totalArea,
+        axisLen,
+        angle,
+      });
     }
-    if (totalArea < 200) continue;
-
-    // Total owned area (drives font size — whole country, not just main component).
-    let fullArea = 0;
-    for (const id of provinces) fullArea += centroids[id]?.[2] ?? 0;
-
-    out.push({
-      tag,
-      name: countries[tag]?.name ?? tag,
-      u: su / totalArea,
-      v: sv / totalArea,
-      area: fullArea,
-      angle: principalAngle(compIds, centroids, mapW, mapH),
-    });
   }
-  out.sort((p, q) => q.area - p.area);
+
+  out.sort((p, q) => q.axisLen - p.axisLen);
   return out;
 }
 

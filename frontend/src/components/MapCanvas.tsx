@@ -189,9 +189,10 @@ function CountryLabels({ rendererRef }: { rendererRef: React.RefObject<MapRender
     const r = rendererRef.current;
     if (!r) return { items: [], zoom: 1 };
     const zoom = r.getZoom();
-    const minArea = 1500 / (zoom * zoom);
+    // Keep only labels whose font size would reach the 9px threshold.
+    const minAxisLen = 9 / (zoom * 180);
     const items = labels
-      .filter((l) => l.area >= minArea)
+      .filter((l) => l.axisLen >= minAxisLen)
       .map((l) => {
         const c = r.texToClient(l.u, l.v);
         return { ...l, x: c.x, y: c.y };
@@ -217,13 +218,14 @@ function CountryLabels({ rendererRef }: { rendererRef: React.RefObject<MapRender
     >
       {visible.items.map((l) => {
         const { zoom } = visible;
-        const fontSize = Math.min(28, Math.sqrt(l.area) * zoom * 0.05);
+        // Font size proportional to the component's principal axis length in screen space.
+        const fontSize = Math.min(28, l.axisLen * zoom * 180);
         if (fontSize < 9) return null;
         const RAD_TO_DEG = 180 / Math.PI;
-        const deg = -l.angle * RAD_TO_DEG;
+        const deg = l.angle * RAD_TO_DEG;
         return (
           <div
-            key={l.tag}
+            key={l.key}
             style={{
               position: "absolute",
               left: l.x - ox,

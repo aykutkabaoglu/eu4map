@@ -421,12 +421,40 @@ def _name_from_history_filename(filename: str, tag: str) -> str:
     return m.group(1).strip() if m else stem.strip()
 
 
+LOC_LINE = re.compile(r'^\s*([A-Za-z0-9_.\-]+)\s*:\s*\d+\s*"(.*)"\s*$')
+LOC_STRIP = re.compile(r"§[A-Za-z!]|£[^£\n]*£|\\n|\$[^$\n]+\$")
+
+
+def load_localisation(raw: Path) -> dict[str, str]:
+    """Load all *_l_english.yml files and return key->text mapping."""
+    loc_dir = raw / "localisation"
+    out: dict[str, str] = {}
+    for path in sorted(loc_dir.glob("*_l_english.yml")):
+        try:
+            for line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+                m = LOC_LINE.match(line)
+                if not m:
+                    continue
+                key, txt = m.group(1), m.group(2)
+                txt = LOC_STRIP.sub("", txt).strip()
+                if txt:
+                    out[key] = txt
+        except Exception:
+            pass
+    return out
+
+
 def run() -> int:
     t0 = time.time()
     if not RAW.exists():
         print(f"ERROR: raw data not mounted at {RAW}", file=sys.stderr)
         return 1
     OUT.mkdir(parents=True, exist_ok=True)
+
+    # --- 0. localisation (country + province display names)
+    print("[etl] loading localisation ...", flush=True)
+    loc = load_localisation(RAW)
+    print(f"[etl]   {len(loc)} localisation keys")
 
     # --- 1. provinces (from definition.csv) + sea/lake/wasteland flags
     print("[etl] loading definition.csv ...", flush=True)
@@ -477,11 +505,13 @@ def run() -> int:
             color = (128, 128, 128)
 
         hist_file = hist_country_files.get(tag)
-        name = tag
+        # Prefer in-game localisation name; fall back to history filename, then tag.
+        name = loc.get(tag) or (
+            _name_from_history_filename(hist_file.name, tag) if hist_file is not None else tag
+        )
         initial = Block()
         dated: list[tuple[Date, Block]] = []
         if hist_file is not None:
-            name = _name_from_history_filename(hist_file.name, tag)
             try:
                 root = parse_file(hist_file, encoding=ENCODING)
             except Exception as e:
@@ -539,8 +569,10 @@ def run() -> int:
     timeline_json: dict[int, list[list[str]]] = {}
 
     for pid, (pname, r, g, b) in sorted(defs.items()):
+        # Prefer in-game localisation name (PROV{id}); fall back to definition.csv name.
+        display_name = loc.get(f"PROV{pid}") or pname
         province_rows.append(
-            (pid, pname, r, g, b, int(pid in sea_set), int(pid in lake_set), int(pid in wasteland_set))
+            (pid, display_name, r, g, b, int(pid in sea_set), int(pid in lake_set), int(pid in wasteland_set))
         )
 
         hp = hist_province_files.get(pid)

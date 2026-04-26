@@ -155,6 +155,7 @@ export function MapCanvas() {
         />
       )}
       {rendererReady && <CountryLabels rendererRef={rendererRef} />}
+      {rendererReady && <ProvinceLabels rendererRef={rendererRef} />}
     </div>
   );
 }
@@ -242,6 +243,90 @@ function CountryLabels({ rendererRef }: { rendererRef: React.RefObject<MapRender
             }}
           >
             {l.name.toUpperCase()}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Province name labels — visible only at high zoom levels.
+const PROVINCE_ZOOM_MIN = 10;
+
+function ProvinceLabels({ rendererRef }: { rendererRef: React.RefObject<MapRenderer | null> }) {
+  const loaded = useApp((s) => s.loaded);
+  const meta = useApp((s) => s.meta);
+  const centroids = useApp((s) => s.centroids);
+  const provinceNames = useApp((s) => s.provinceNames);
+  const [version, setVersion] = useState(0);
+
+  useEffect(() => {
+    const r = rendererRef.current;
+    if (!r) return;
+    setVersion((v) => (v + 1) % 1_000_000);
+    return r.onViewChange(() => setVersion((v) => (v + 1) % 1_000_000));
+  }, [rendererRef, loaded]);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const visible = useMemo(() => {
+    const r = rendererRef.current;
+    if (!r || !meta || !loaded) return { items: [], zoom: 1 };
+    const zoom = r.getZoom();
+    if (zoom < PROVINCE_ZOOM_MIN) return { items: [], zoom };
+
+    const seaSet = new Set(meta.sea_ids);
+    const lakeSet = new Set(meta.lake_ids);
+    const wasteSet = new Set(meta.wasteland_ids);
+
+    const items: { id: string; name: string; x: number; y: number }[] = [];
+    for (const idStr in provinceNames) {
+      const id = parseInt(idStr);
+      if (seaSet.has(id) || lakeSet.has(id) || wasteSet.has(id)) continue;
+      const c = centroids[idStr];
+      if (!c) continue;
+      const { x, y } = r.texToClient(c[0], c[1]);
+      items.push({ id: idStr, name: provinceNames[idStr], x, y });
+    }
+    return { items, zoom };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [version, loaded, meta, centroids, provinceNames]);
+
+  const rect = containerRef.current?.getBoundingClientRect();
+  const ox = rect?.left ?? 0;
+  const oy = rect?.top ?? 0;
+  const W = rect?.width ?? window.innerWidth;
+  const H = rect?.height ?? window.innerHeight;
+
+  return (
+    <div
+      ref={containerRef}
+      style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}
+    >
+      {visible.items.map((p) => {
+        const lx = p.x - ox;
+        const ly = p.y - oy;
+        if (lx < -60 || lx > W + 60 || ly < -20 || ly > H + 20) return null;
+        const fontSize = Math.min(11, visible.zoom * 2.2);
+        if (fontSize < 7) return null;
+        return (
+          <div
+            key={p.id}
+            style={{
+              position: "absolute",
+              left: lx,
+              top: ly,
+              transform: "translate(-50%, -50%)",
+              fontFamily: "var(--font-ui)",
+              fontSize,
+              color: "rgba(30,20,10,0.65)",
+              textShadow: "0 0 3px rgba(255,240,210,0.95), 0 0 5px rgba(255,240,210,0.7)",
+              whiteSpace: "nowrap",
+              userSelect: "none",
+              letterSpacing: "0.03em",
+            }}
+          >
+            {p.name}
           </div>
         );
       })}

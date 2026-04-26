@@ -167,6 +167,7 @@ function CountryLabels({ rendererRef }: { rendererRef: React.RefObject<MapRender
   const timeline = useApp((s) => s.timeline);
   const centroids = useApp((s) => s.centroids);
   const capitalTimeline = useApp((s) => s.capitalTimeline);
+  const adjacency = useApp((s) => s.adjacency);
   const [version, setVersion] = useState(0);
 
   // Re-render whenever the renderer view changes (pan/zoom).
@@ -180,9 +181,9 @@ function CountryLabels({ rendererRef }: { rendererRef: React.RefObject<MapRender
 
   const labels = useMemo(() => {
     if (!loaded || !meta) return [];
-    const labelState: LabelState = { meta, countries, timeline, centroids, capitalTimeline };
+    const labelState: LabelState = { meta, countries, timeline, centroids, capitalTimeline, adjacency };
     return computeCountryLabels(labelState, currentDate);
-  }, [loaded, meta, countries, timeline, centroids, capitalTimeline, currentDate]);
+  }, [loaded, meta, countries, timeline, centroids, capitalTimeline, adjacency, currentDate]);
 
   const visible = useMemo(() => {
     const r = rendererRef.current;
@@ -216,10 +217,10 @@ function CountryLabels({ rendererRef }: { rendererRef: React.RefObject<MapRender
     >
       {visible.items.map((l) => {
         const { zoom } = visible;
-        // Font scales with actual owned land area + current zoom, capped at 28px.
-        // sqrt(area) normalises so large countries don't dominate too much.
         const fontSize = Math.min(28, Math.sqrt(l.area) * zoom * 0.05);
         if (fontSize < 9) return null;
+        const RAD_TO_DEG = 180 / Math.PI;
+        const deg = -l.angle * RAD_TO_DEG;
         return (
           <div
             key={l.tag}
@@ -227,7 +228,7 @@ function CountryLabels({ rendererRef }: { rendererRef: React.RefObject<MapRender
               position: "absolute",
               left: l.x - ox,
               top: l.y - oy,
-              transform: "translate(-50%, -50%)",
+              transform: `translate(-50%, -50%) rotate(${deg.toFixed(1)}deg)`,
               fontFamily: "var(--font-display)",
               fontSize,
               color: "rgba(30,20,10,0.95)",

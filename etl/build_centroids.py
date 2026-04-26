@@ -76,6 +76,22 @@ def main() -> None:
     dest.write_text(json.dumps(out, separators=(",", ":")))
     print(f"wrote {dest} — {len(out)} provinces")
 
+    # Province adjacency: scan right-neighbor and down-neighbor pairs.
+    # adj[a].add(b) whenever pixels a and b share a horizontal or vertical edge.
+    adj: dict[int, set[int]] = {}
+    right_pairs = np.stack([ids[:, :-1].ravel(), ids[:, 1:].ravel()], axis=1)
+    down_pairs  = np.stack([ids[:-1, :].ravel(), ids[1:, :].ravel()], axis=1)
+    for pairs in (right_pairs, down_pairs):
+        mask = (pairs[:, 0] != pairs[:, 1]) & (pairs[:, 0] > 0) & (pairs[:, 1] > 0)
+        for a, b in pairs[mask]:
+            a, b = int(a), int(b)
+            adj.setdefault(a, set()).add(b)
+            adj.setdefault(b, set()).add(a)
+    adj_json = {str(k): sorted(v) for k, v in adj.items()}
+    adj_dest = OUT / "province_adjacency.json"
+    adj_dest.write_text(json.dumps(adj_json, separators=(",", ":")))
+    print(f"wrote {adj_dest} — {len(adj_json)} provinces with neighbours")
+
     # Emit compact id -> name map for UI labels / tooltips.
     names: dict[str, str] = {}
     if DB.exists():

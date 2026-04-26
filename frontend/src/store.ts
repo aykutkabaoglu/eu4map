@@ -45,6 +45,9 @@ export type Centroids = Record<string, [number, number, number, number, number, 
 // tag -> [[date, province_id], ...] sorted ascending — only tags that have changes
 export type CapitalTimeline = Record<string, Array<[string, number]>>;
 
+// province_id -> [adjacent_province_id, ...]
+export type Adjacency = Record<string, number[]>;
+
 interface AppState {
   // raw data
   meta: Meta | null;
@@ -52,6 +55,7 @@ interface AppState {
   timeline: OwnerTimeline;
   centroids: Centroids;
   capitalTimeline: CapitalTimeline;
+  adjacency: Adjacency;
   provinceNames: Record<string, string>;
   loaded: boolean;
   error: string | null;
@@ -82,6 +86,7 @@ export const useApp = create<AppState>((set, get) => ({
   timeline: {},
   centroids: {},
   capitalTimeline: {},
+  adjacency: {},
   provinceNames: {},
   loaded: false,
   error: null,
@@ -94,12 +99,13 @@ export const useApp = create<AppState>((set, get) => ({
 
   async loadAll() {
     try {
-      const [metaRes, countriesRes, timelineRes, centroidsRes, capitalTimelineRes, namesRes] = await Promise.all([
+      const [metaRes, countriesRes, timelineRes, centroidsRes, capitalTimelineRes, adjacencyRes, namesRes] = await Promise.all([
         fetch("/data/meta.json"),
         fetch("/data/countries.json"),
         fetch("/data/province_owner_timeline.json"),
         fetch("/data/province_centroids.json"),
         fetch("/data/country_capital_timeline.json"),
+        fetch("/data/province_adjacency.json"),
         fetch("/data/province_names.json"),
       ]);
       if (!metaRes.ok || !countriesRes.ok || !timelineRes.ok) {
@@ -110,8 +116,9 @@ export const useApp = create<AppState>((set, get) => ({
       const timeline: OwnerTimeline = await timelineRes.json();
       const centroids: Centroids = centroidsRes.ok ? await centroidsRes.json() : {};
       const capitalTimeline: CapitalTimeline = capitalTimelineRes.ok ? await capitalTimelineRes.json() : {};
+      const adjacency: Adjacency = adjacencyRes.ok ? await adjacencyRes.json() : {};
       const provinceNames: Record<string, string> = namesRes.ok ? await namesRes.json() : {};
-      set({ meta, countries, timeline, centroids, capitalTimeline, provinceNames, loaded: true, currentDate: meta.start });
+      set({ meta, countries, timeline, centroids, capitalTimeline, adjacency, provinceNames, loaded: true, currentDate: meta.start });
     } catch (e) {
       set({ error: (e as Error).message });
     }
@@ -163,9 +170,10 @@ export const useApp = create<AppState>((set, get) => ({
 export interface CountryLabel {
   tag: string;
   name: string;
-  u: number;   // label position: capital province centroid (tex coords)
+  u: number;    // label position in texture coords (main landmass centroid)
   v: number;
   area: number; // total owned province area (texture pixels) — drives font size + visibility
+  angle: number; // principal axis rotation in radians
 }
 
 /** Minimal state slice needed by computeCountryLabels — avoids the `as never` hack. */
@@ -175,6 +183,7 @@ export interface LabelState {
   timeline: OwnerTimeline;
   centroids: Centroids;
   capitalTimeline: CapitalTimeline;
+  adjacency: Adjacency;
 }
 
 /** Return the capital province id active at the given date for the given tag. */
@@ -193,44 +202,125 @@ export function capitalAt(capitalTimeline: CapitalTimeline, countries: CountryMa
   return countries[tag]?.capital ?? null;
 }
 
-/** Build one label per country at the given date, anchored to the current capital province.
- *  If the capital has been conquered, falls back to the area-weighted centroid of owned provinces. */
+/** BFS connected component. Returns the province ids in this component. */
+function bfsComponent(start: string, owned: Set<string>, adjacency: Adjacency): Set<string> {
+  const comp = new Set<string>();
+  const queue: string[] = [start];
+  comp.add(start);
+  while (queue.length > 0) {
+    const cur = queue.pop()!;
+    for (const nb of (adjacency[cur] ?? [])) {
+      const nbStr = String(nb);
+      if (owned.has(nbStr) && !comp.has(nbStr)) {
+        comp.add(nbStr);
+        queue.push(nbStr);
+      }
+    }
+  }
+  return comp;
+}
+
+/** PCA on area-weighted province positions → principal axis angle in radians.
+ *  mapW/mapH convert normalized tex coords to pixel space so aspect ratio
+ *  doesn't bias the axis (5632×2048 map: X coords are 2.75× wider than Y). */
+function principalAngle(ids: string[], centroids: Centroids, mapW: number, mapH: number): number {
+  let totalArea = 0, sx = 0, sy = 0;
+  for (const id of ids) {
+    const c = centroids[id];
+    if (!c) continue;
+    const [cx, cy, area] = c;
+    totalArea += area;
+    sx += cx * mapW * area;
+    sy += cy * mapH * area;
+  }
+  if (totalArea === 0) return 0;
+  const mx = sx / totalArea, my = sy / totalArea;
+  let vxx = 0, vyy = 0, vxy = 0;
+  for (const id of ids) {
+    const c = centroids[id];
+    if (!c) continue;
+    const [cx, cy, area] = c;
+    const dx = cx * mapW - mx, dy = cy * mapH - my;
+    vxx += area * dx * dx;
+    vyy += area * dy * dy;
+    vxy += area * dx * dy;
+  }
+  return 0.5 * Math.atan2(2 * vxy, vxx - vyy);
+}
+
+/** Build one label per country at the given date.
+ *  Label is placed on the largest connected landmass containing the capital (or
+ *  the largest component if the capital is lost). Rotation follows the principal axis. */
 export function computeCountryLabels(state: LabelState, date: string): CountryLabel[] {
-  const { meta, countries, timeline, centroids, capitalTimeline } = state;
+  const { meta, countries, timeline, centroids, capitalTimeline, adjacency } = state;
   if (!meta) return [];
+  const mapW = meta.width as number;
+  const mapH = meta.height as number;
   const tKey = dateKey(date);
 
-  interface Agg { sx: number; sy: number; area: number; }
-  const agg: Record<string, Agg> = {};
-
+  // Collect owned provinces per country.
+  const owned: Record<string, string[]> = {};
   for (const idStr in timeline) {
-    const c = centroids[idStr];
-    if (!c) continue;
     const owner = binarySearchOwner(timeline[idStr], tKey);
     if (!owner) continue;
-    const [cx, cy, area] = c;
-    const a = agg[owner] ?? (agg[owner] = { sx: 0, sy: 0, area: 0 });
-    a.sx += cx * area;
-    a.sy += cy * area;
-    a.area += area;
+    (owned[owner] ??= []).push(idStr);
   }
 
   const out: CountryLabel[] = [];
-  for (const tag in agg) {
-    const a = agg[tag];
-    if (a.area < 200) continue;
+  for (const tag in owned) {
+    const provinces = owned[tag];
+    const ownedSet = new Set(provinces);
 
-    // Prefer the current capital; fall back to owned-province centroid if conquered.
+    // Find all connected components.
+    const visited = new Set<string>();
+    const components: Set<string>[] = [];
+    for (const id of provinces) {
+      if (!visited.has(id)) {
+        const comp = bfsComponent(id, ownedSet, adjacency);
+        comp.forEach((p) => visited.add(p));
+        components.push(comp);
+      }
+    }
+
+    // Prefer the component containing the current capital; fall back to largest by area.
     const capId = capitalAt(capitalTimeline, countries, tag, tKey);
-    const capOwned = capId != null && binarySearchOwner(timeline[String(capId)] ?? [], tKey) === tag;
-    const cap = capOwned ? centroids[String(capId)] : null;
+    const capStr = capId != null ? String(capId) : null;
+    const capOwned = capStr != null && ownedSet.has(capStr) &&
+      binarySearchOwner(timeline[capStr] ?? [], tKey) === tag;
+
+    let mainComp: Set<string>;
+    if (capOwned && capStr) {
+      mainComp = components.find((c) => c.has(capStr)) ?? components[0];
+    } else {
+      // Largest component by total province area.
+      mainComp = components.reduce((best, c) => {
+        const area = (id: string) => centroids[id]?.[2] ?? 0;
+        const areaOf = (comp: Set<string>) => { let s = 0; comp.forEach((p) => s += area(p)); return s; };
+        return areaOf(c) > areaOf(best) ? c : best;
+      }, components[0]);
+    }
+
+    // Area-weighted centroid of the main component.
+    const compIds = [...mainComp];
+    let totalArea = 0, su = 0, sv = 0;
+    for (const id of compIds) {
+      const c = centroids[id];
+      if (!c) continue;
+      totalArea += c[2]; su += c[0] * c[2]; sv += c[1] * c[2];
+    }
+    if (totalArea < 200) continue;
+
+    // Total owned area (drives font size — whole country, not just main component).
+    let fullArea = 0;
+    for (const id of provinces) fullArea += centroids[id]?.[2] ?? 0;
 
     out.push({
       tag,
       name: countries[tag]?.name ?? tag,
-      u: cap ? cap[0] : a.sx / a.area,
-      v: cap ? cap[1] : a.sy / a.area,
-      area: a.area,
+      u: su / totalArea,
+      v: sv / totalArea,
+      area: fullArea,
+      angle: principalAngle(compIds, centroids, mapW, mapH),
     });
   }
   out.sort((p, q) => q.area - p.area);

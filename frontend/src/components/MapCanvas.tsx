@@ -223,8 +223,7 @@ function CountryLabels({ rendererRef }: { rendererRef: React.RefObject<MapRender
         const nameLen = Math.max(3, l.name.length);
         const maxByWidth = (l.boxW * 0.9) / (nameLen * avgGlyph);
         const maxByHeight = l.boxH * 0.6;
-        const preferred = Math.sqrt(l.area) * 0.35;
-        const fontSize = Math.min(28, preferred, maxByWidth, maxByHeight);
+        const fontSize = Math.min(28, maxByWidth, maxByHeight);
         if (fontSize < 9) return null;
         return (
           <div

@@ -203,6 +203,33 @@ export function capitalAt(capitalTimeline: CapitalTimeline, countries: CountryMa
   return countries[tag]?.capital ?? null;
 }
 
+/** Return true if compB is reachable from compA by crossing only sea/lake or own provinces.
+ *  Used to decide whether two disconnected territories should share a label. */
+function isSeaConnected(
+  compA: string[],
+  compB: string[],
+  ownedSet: Set<string>,
+  adjacency: Adjacency,
+  seaLakeSet: Set<number>,
+): boolean {
+  const targetSet = new Set(compB);
+  const visited = new Set<string>(compA);
+  const queue: string[] = [...compA];
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    for (const nb of (adjacency[cur] ?? [])) {
+      const nbStr = String(nb);
+      if (visited.has(nbStr)) continue;
+      if (targetSet.has(nbStr)) return true;
+      if (seaLakeSet.has(nb) || ownedSet.has(nbStr)) {
+        visited.add(nbStr);
+        queue.push(nbStr);
+      }
+    }
+  }
+  return false;
+}
+
 /** BFS connected component. Returns the province ids in this component. */
 function bfsComponent(start: string, owned: Set<string>, adjacency: Adjacency): Set<string> {
   const comp = new Set<string>();
@@ -261,6 +288,7 @@ export function computeCountryLabels(state: LabelState, date: string): CountryLa
   const mapW = meta.width as number;
   const mapH = meta.height as number;
   const tKey = dateKey(date);
+  const seaLakeSet = new Set<number>([...meta.sea_ids, ...meta.lake_ids]);
 
   // Collect owned provinces per country.
   const owned: Record<string, string[]> = {};
@@ -310,7 +338,8 @@ export function computeCountryLabels(state: LabelState, date: string): CountryLa
       for (const g of groups) {
         const dx = (comp.cu - g.cu) * mapW;
         const dy = (comp.cv - g.cv) * mapH;
-        if (Math.sqrt(dx * dx + dy * dy) < MERGE_DIST_PX) {
+        if (Math.sqrt(dx * dx + dy * dy) < MERGE_DIST_PX &&
+            isSeaConnected(g.ids, comp.ids, ownedSet, adjacency, seaLakeSet)) {
           // Update group centroid (area-weighted) and append provinces.
           const newArea = g.area + comp.area;
           g.cu = (g.cu * g.area + comp.cu * comp.area) / newArea;

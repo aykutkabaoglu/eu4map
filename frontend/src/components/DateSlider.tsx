@@ -2,41 +2,65 @@ import * as Slider from "@radix-ui/react-slider";
 import { useEffect, useRef, useState } from "react";
 import { addDays, daysBetween, useApp } from "../store";
 
+// Days/second presets: 1 day/s, 7 days/s, 30 days/s, 90 days/s, 365 days/s
+const SPEEDS = [1, 7, 30, 90, 365] as const;
+const SPEED_LABELS = ["Day", "Week", "Month", "3 Mo", "Year"] as const;
+const DEFAULT_SPEED_IDX = 2; // 30 d/s (month)
+
 export function DateSlider() {
   const meta = useApp((s) => s.meta);
   const currentDate = useApp((s) => s.currentDate);
   const setDate = useApp((s) => s.setDate);
   const [playing, setPlaying] = useState(false);
+  const [speedIdx, setSpeedIdx] = useState(DEFAULT_SPEED_IDX);
   const rafRef = useRef<number | null>(null);
-  const lastTsRef = useRef<number>(0);
+  const speedRef = useRef(SPEEDS[DEFAULT_SPEED_IDX]);
+  // keep a ref to currentDate so the RAF loop doesn't need it as a dependency
+  const currentDateRef = useRef(currentDate);
+  useEffect(() => { currentDateRef.current = currentDate; }, [currentDate]);
 
   const totalDays = meta ? daysBetween(meta.start, meta.end) : 0;
   const currentDays = meta ? daysBetween(meta.start, currentDate) : 0;
 
+  const slower = () => {
+    const i = Math.max(0, speedIdx - 1);
+    setSpeedIdx(i);
+    speedRef.current = SPEEDS[i];
+  };
+  const faster = () => {
+    const i = Math.min(SPEEDS.length - 1, speedIdx + 1);
+    setSpeedIdx(i);
+    speedRef.current = SPEEDS[i];
+  };
+
   useEffect(() => {
     if (!meta || !playing) return;
-    const DAYS_PER_SECOND = 365;
+    let lastTs = 0;
+    let accum = 0; // fractional days carried over between frames
     const step = (ts: number) => {
-      if (!lastTsRef.current) lastTsRef.current = ts;
-      const dt = (ts - lastTsRef.current) / 1000;
-      lastTsRef.current = ts;
-      const delta = Math.max(1, Math.round(dt * DAYS_PER_SECOND));
-      const d = addDays(currentDate, delta);
-      if (daysBetween(meta.start, d) >= totalDays) {
-        setDate(meta.end);
-        setPlaying(false);
-        return;
+      if (!lastTs) lastTs = ts;
+      const dt = (ts - lastTs) / 1000;
+      lastTs = ts;
+      accum += dt * speedRef.current;
+      const delta = Math.floor(accum);
+      if (delta >= 1) {
+        accum -= delta;
+        const d = addDays(currentDateRef.current, delta);
+        if (daysBetween(meta.start, d) >= totalDays) {
+          setDate(meta.end);
+          setPlaying(false);
+          return;
+        }
+        setDate(d);
       }
-      setDate(d);
       rafRef.current = requestAnimationFrame(step);
     };
     rafRef.current = requestAnimationFrame(step);
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
-      lastTsRef.current = 0;
     };
-  }, [playing, currentDate, meta, setDate, totalDays]);
+  }, [playing, meta, setDate, totalDays]);
 
   // keyboard: arrow keys = +/- day, shift = month, alt = year
   useEffect(() => {
@@ -66,13 +90,43 @@ export function DateSlider() {
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 16,
+        gap: 12,
         padding: "5px 18px",
       }}
     >
       <button onClick={() => setPlaying(!playing)} style={{ minWidth: 72 }}>
         {playing ? "❚❚ Pause" : "▶ Play"}
       </button>
+      {/* Speed control */}
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <button
+          onClick={slower}
+          disabled={speedIdx === 0}
+          style={{ minWidth: 24, padding: "2px 6px", fontSize: 12 }}
+          title="Slower"
+        >
+          ‹
+        </button>
+        <span
+          style={{
+            fontFamily: "var(--font-ui)",
+            fontSize: 11,
+            color: "var(--ink-soft)",
+            minWidth: 28,
+            textAlign: "center",
+          }}
+        >
+          {SPEED_LABELS[speedIdx]}
+        </span>
+        <button
+          onClick={faster}
+          disabled={speedIdx === SPEEDS.length - 1}
+          style={{ minWidth: 24, padding: "2px 6px", fontSize: 12 }}
+          title="Faster"
+        >
+          ›
+        </button>
+      </div>
       <div
         style={{
           fontFamily: "var(--font-display)",

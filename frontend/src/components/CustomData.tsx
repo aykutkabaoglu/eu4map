@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 
-interface Note { id: number; country_tag: string; text: string; created_at: string }
 interface HistoricalEvent { date: string; kind: string; title: string; province_id?: number }
 interface GameEvent {
   id: string; scope: string; title: string | null; desc: string | null;
@@ -10,18 +9,16 @@ interface GameEvent {
 
 export function CustomData(props: { tag: string; provinceId?: number | null }) {
   const { tag, provinceId } = props;
-  const [tab, setTab] = useState<"history" | "game" | "notes">("history");
+  const [tab, setTab] = useState<"history" | "game">("history");
 
   return (
     <div>
       <div style={{ display: "flex", gap: 4, marginTop: 14, marginBottom: 8, flexWrap: "wrap" }}>
         <TabButton active={tab === "history"} onClick={() => setTab("history")}>Historical</TabButton>
         <TabButton active={tab === "game"} onClick={() => setTab("game")}>Game Events</TabButton>
-        <TabButton active={tab === "notes"} onClick={() => setTab("notes")}>Notes</TabButton>
       </div>
       {tab === "history" && <HistoryTab tag={tag} provinceId={provinceId ?? null} />}
       {tab === "game" && <GameEventsTab tag={tag} />}
-      {tab === "notes" && <NotesTab tag={tag} />}
     </div>
   );
 }
@@ -372,63 +369,6 @@ function TabButton(p: { active: boolean; onClick: () => void; children: React.Re
   );
 }
 
-// ---------- Notes ----------
-
-function NotesTab({ tag }: { tag: string }) {
-  const [items, setItems] = useState<Note[]>([]);
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const refresh = useCallback(async () => {
-    const r = await fetch(`/api/custom/countries/${tag}/notes`);
-    if (r.ok) setItems(await r.json());
-  }, [tag]);
-  useEffect(() => { refresh(); }, [refresh]);
-
-  async function add() {
-    if (!text.trim()) return;
-    setBusy(true);
-    try {
-      await fetch(`/api/custom/countries/${tag}/notes`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      setText("");
-      await refresh();
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function remove(id: number) {
-    await fetch(`/api/custom/countries/${tag}/notes/${id}`, { method: "DELETE" });
-    await refresh();
-  }
-
-  return (
-    <div>
-      <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder="Write a note…"
-        rows={2}
-        style={textareaStyle}
-      />
-      <div style={{ textAlign: "right", marginBottom: 6 }}>
-        <button disabled={busy || !text.trim()} onClick={add}>Add</button>
-      </div>
-      {items.length === 0 && <Empty text="No notes." />}
-      {items.map((n) => (
-        <div key={n.id} style={itemStyle}>
-          <div style={{ fontSize: 14, color: "var(--ink-soft)" }}>{n.created_at}</div>
-          <div style={{ whiteSpace: "pre-wrap", fontSize: 17 }}>{n.text}</div>
-          <button style={miniBtnStyle} onClick={() => remove(n.id)}>Delete</button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // ---------- shared ----------
 
 function Empty({ text }: { text: string }) {
@@ -449,18 +389,10 @@ const inputStyle: React.CSSProperties = {
   border: "1px solid var(--frame-dark)",
   color: "var(--ink)",
 };
-const textareaStyle: React.CSSProperties = { ...inputStyle, resize: "vertical" };
 const itemStyle: React.CSSProperties = {
   position: "relative",
-  padding: "6px 28px 6px 6px",
+  padding: "6px 6px",
   marginBottom: 4,
   background: "rgba(184, 134, 11, 0.08)",
   borderLeft: "3px solid var(--gold)",
-};
-const miniBtnStyle: React.CSSProperties = {
-  position: "absolute",
-  top: 2,
-  right: 2,
-  padding: "2px 7px",
-  fontSize: 13,
 };

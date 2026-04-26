@@ -1,8 +1,6 @@
 """FastAPI backend for EU4 web map.
 
-Two SQLite files:
-  - data/eu4.db          read-only, produced by etl/build.py
-  - custom_db/custom.db  read-write, holds user-added notes / commanders / events
+SQLite: data/eu4.db (read-only, produced by etl/build.py)
 
 Run inside the dev container:
     docker compose exec dev bash -lc \
@@ -22,7 +20,6 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
 
 # Reuse the ETL's PDX parser for structured event rendering.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "etl"))
@@ -30,9 +27,7 @@ from pdx_parser import Block, parse_text  # noqa: E402
 
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/workspace/data"))
-CUSTOM_DIR = Path(os.environ.get("CUSTOM_DIR", "/workspace/custom_db"))
 EU4_DB = DATA_DIR / "eu4.db"
-CUSTOM_DB = CUSTOM_DIR / "custom.db"
 
 
 # ---------------------------------------------------------------------------
@@ -51,50 +46,8 @@ def _connect(path: Path, read_only: bool = False) -> sqlite3.Connection:
     return con
 
 
-CUSTOM_SCHEMA = """
-CREATE TABLE IF NOT EXISTS notes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    country_tag TEXT NOT NULL,
-    text TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_notes_tag ON notes(country_tag);
-
-CREATE TABLE IF NOT EXISTS commanders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    country_tag TEXT NOT NULL,
-    name TEXT NOT NULL,
-    fire INTEGER, shock INTEGER, maneuver INTEGER, siege INTEGER,
-    start_date TEXT, death_date TEXT,
-    description TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_commanders_tag ON commanders(country_tag);
-
-CREATE TABLE IF NOT EXISTS events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT NOT NULL,
-    country_tag TEXT,
-    province_id INTEGER,
-    title TEXT NOT NULL,
-    description TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_events_tag ON events(country_tag);
-CREATE INDEX IF NOT EXISTS idx_events_prov ON events(province_id);
-CREATE INDEX IF NOT EXISTS idx_events_date ON events(date);
-"""
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    CUSTOM_DIR.mkdir(parents=True, exist_ok=True)
-    con = _connect(CUSTOM_DB)
-    try:
-        con.executescript(CUSTOM_SCHEMA)
-        con.commit()
-    finally:
-        con.close()
     yield
 
 
@@ -124,7 +77,6 @@ def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "eu4_db_exists": EU4_DB.exists(),
-        "custom_db_exists": CUSTOM_DB.exists(),
     }
 
 
@@ -521,182 +473,3 @@ def get_eu4_event(eid: str) -> dict:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Custom user-data endpoints (custom.db, read-write)
-# ---------------------------------------------------------------------------
-
-
-def _custom() -> sqlite3.Connection:
-    return _connect(CUSTOM_DB)
-
-
-class NoteIn(BaseModel):
-    text: str = Field(..., min_length=1, max_length=5000)
-
-
-class NoteOut(BaseModel):
-    id: int
-    country_tag: str
-    text: str
-    created_at: str
-
-
-@app.get("/api/custom/countries/{tag}/notes")
-def list_notes(tag: str) -> list[NoteOut]:
-    tag = tag.upper()
-    with _custom() as con:
-        rows = con.execute(
-            "SELECT * FROM notes WHERE country_tag = ? ORDER BY id DESC", (tag,)
-        ).fetchall()
-    return [NoteOut(**dict(r)) for r in rows]
-
-
-@app.post("/api/custom/countries/{tag}/notes", status_code=201)
-def create_note(tag: str, note: NoteIn) -> NoteOut:
-    tag = tag.upper()
-    with _custom() as con:
-        cur = con.execute(
-            "INSERT INTO notes (country_tag, text) VALUES (?, ?)", (tag, note.text)
-        )
-        row = con.execute("SELECT * FROM notes WHERE id = ?", (cur.lastrowid,)).fetchone()
-        con.commit()
-    return NoteOut(**dict(row))
-
-
-@app.put("/api/custom/countries/{tag}/notes/{note_id}")
-def update_note(tag: str, note_id: int, note: NoteIn) -> NoteOut:
-    tag = tag.upper()
-    with _custom() as con:
-        cur = con.execute(
-            "UPDATE notes SET text = ? WHERE id = ? AND country_tag = ?",
-            (note.text, note_id, tag),
-        )
-        if cur.rowcount == 0:
-            raise HTTPException(404, "note not found")
-        row = con.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
-        con.commit()
-    return NoteOut(**dict(row))
-
-
-@app.delete("/api/custom/countries/{tag}/notes/{note_id}", status_code=204)
-def delete_note(tag: str, note_id: int) -> None:
-    tag = tag.upper()
-    with _custom() as con:
-        cur = con.execute(
-            "DELETE FROM notes WHERE id = ? AND country_tag = ?", (note_id, tag)
-        )
-        if cur.rowcount == 0:
-            raise HTTPException(404, "note not found")
-        con.commit()
-
-
-class CommanderIn(BaseModel):
-    name: str = Field(..., min_length=1, max_length=200)
-    fire: int | None = Field(None, ge=0, le=6)
-    shock: int | None = Field(None, ge=0, le=6)
-    maneuver: int | None = Field(None, ge=0, le=6)
-    siege: int | None = Field(None, ge=0, le=6)
-    start_date: str | None = None
-    death_date: str | None = None
-    description: str | None = None
-
-
-@app.get("/api/custom/countries/{tag}/commanders")
-def list_commanders(tag: str) -> list[dict]:
-    tag = tag.upper()
-    with _custom() as con:
-        rows = con.execute(
-            "SELECT * FROM commanders WHERE country_tag = ? ORDER BY start_date, id",
-            (tag,),
-        ).fetchall()
-    return [dict(r) for r in rows]
-
-
-@app.post("/api/custom/countries/{tag}/commanders", status_code=201)
-def create_commander(tag: str, c: CommanderIn) -> dict:
-    tag = tag.upper()
-    with _custom() as con:
-        cur = con.execute(
-            "INSERT INTO commanders "
-            "(country_tag, name, fire, shock, maneuver, siege, start_date, death_date, description) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
-            (tag, c.name, c.fire, c.shock, c.maneuver, c.siege, c.start_date, c.death_date, c.description),
-        )
-        row = con.execute("SELECT * FROM commanders WHERE id = ?", (cur.lastrowid,)).fetchone()
-        con.commit()
-    return dict(row)
-
-
-@app.delete("/api/custom/countries/{tag}/commanders/{cid}", status_code=204)
-def delete_commander(tag: str, cid: int) -> None:
-    tag = tag.upper()
-    with _custom() as con:
-        cur = con.execute(
-            "DELETE FROM commanders WHERE id = ? AND country_tag = ?", (cid, tag)
-        )
-        if cur.rowcount == 0:
-            raise HTTPException(404, "commander not found")
-        con.commit()
-
-
-class EventIn(BaseModel):
-    date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
-    country_tag: str | None = None
-    province_id: int | None = None
-    title: str = Field(..., min_length=1, max_length=200)
-    description: str | None = None
-
-
-@app.get("/api/custom/events")
-def list_events(
-    tag: str | None = None,
-    province_id: int | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-) -> list[dict]:
-    q = "SELECT * FROM events WHERE 1=1"
-    args: list = []
-    if tag:
-        q += " AND country_tag = ?"
-        args.append(tag.upper())
-    if province_id is not None:
-        q += " AND province_id = ?"
-        args.append(province_id)
-    if date_from:
-        q += " AND date >= ?"
-        args.append(date_from)
-    if date_to:
-        q += " AND date <= ?"
-        args.append(date_to)
-    q += " ORDER BY date, id"
-    with _custom() as con:
-        rows = con.execute(q, args).fetchall()
-    return [dict(r) for r in rows]
-
-
-@app.post("/api/custom/events", status_code=201)
-def create_event(ev: EventIn) -> dict:
-    with _custom() as con:
-        cur = con.execute(
-            "INSERT INTO events (date, country_tag, province_id, title, description) "
-            "VALUES (?,?,?,?,?)",
-            (
-                ev.date,
-                ev.country_tag.upper() if ev.country_tag else None,
-                ev.province_id,
-                ev.title,
-                ev.description,
-            ),
-        )
-        row = con.execute("SELECT * FROM events WHERE id = ?", (cur.lastrowid,)).fetchone()
-        con.commit()
-    return dict(row)
-
-
-@app.delete("/api/custom/events/{eid}", status_code=204)
-def delete_event(eid: int) -> None:
-    with _custom() as con:
-        cur = con.execute("DELETE FROM events WHERE id = ?", (eid,))
-        if cur.rowcount == 0:
-            raise HTTPException(404, "event not found")
-        con.commit()
